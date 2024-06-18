@@ -1,0 +1,114 @@
+import json
+import psycopg2
+import random
+import base64
+from math import sqrt
+
+# Database connection details
+host = "79.174.88.41"
+port = 17429
+user = "admin_1"
+password = "12345bB!"
+db_name = "db_reactions"
+
+def cosine_similarity(vec1, vec2):
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    norm_vec1 = sqrt(sum(a * a for a in vec1))
+    norm_vec2 = sqrt(sum(b * b for b in vec2))
+    if norm_vec1 == 0 or norm_vec2 == 0:
+        return 0.0
+    return dot_product / (norm_vec1 * norm_vec2)
+
+def handler(event, context):
+    try:
+        if event.get('isBase64Encoded', False):
+            body = base64.b64decode(event['body']).decode('utf-8')
+        else:
+            body = event['body']
+        
+        body = json.loads(body)
+        user_id = body['user_id']
+    except (KeyError, json.JSONDecodeError) as e:
+        print(f"Error decoding input: {str(e)}")
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': 'Invalid input'})
+        }
+
+    print(f"Received user_id: {user_id}")
+
+    connection = psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname=db_name,
+        options="-c client_encoding=utf8"
+    )
+
+    try:
+        with connection.cursor() as cursor:
+            # Get random place liked by the user
+            cursor.execute("""
+                SELECT place_id 
+                FROM reactions 
+                WHERE user_id = %s AND reaction = 1 
+                ORDER BY random() LIMIT 1
+            """, (user_id,))
+            place = cursor.fetchone()
+
+            if not place:
+                print("No liked places found for this user")
+                return {
+                    'statusCode': 404,
+                    'body': json.dumps({'error': 'No liked places found for this user'})
+                }
+
+            liked_place_id = place[0]
+            print(f"Liked place ID: {liked_place_id}")
+
+            # Build the user-place matrix
+            cursor.execute("SELECT DISTINCT place_id FROM reactions")
+            places = [row[0] for row in cursor.fetchall()]
+
+            cursor.execute("SELECT DISTINCT user_id FROM reactions")
+            users = [row[0] for row in cursor.fetchall()]
+
+            user_place_matrix = [[0] * len(places) for _ in range(len(users))]
+
+            for i, uid in enumerate(users):
+                for j, pid in enumerate(places):
+                    cursor.execute("""
+                        SELECT reaction 
+                        FROM reactions 
+                        WHERE user_id = %s AND place_id = %s
+                    """, (uid, pid))
+                    reaction = cursor.fetchone()
+                    if reaction:
+                        user_place_matrix[i][j] = reaction[0]
+
+            # Find the most similar place
+            liked_place_vector = [user_place_matrix[i][places.index(liked_place_id)] for i in range(len(users))]
+            similarities = []
+            for i, pid in enumerate(places):
+                if pid != liked_place_id:
+                    place_vector = [user_place_matrix[j][i] for j in range(len(users))]
+                    similarity = cosine_similarity(liked_place_vector, place_vector)
+                    similarities.append((similarity, pid))
+
+            most_similar_place_id = max(similarities, key=lambda x: x[0])[1]
+            print(f"Most similar place ID: {most_similar_place_id}")
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'most_similar_place_id': most_similar_place_id})
+            }
+    except Exception as e:
+        connection.rollback()
+        print(f"Error during execution: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+    finally:
+        connection.close()

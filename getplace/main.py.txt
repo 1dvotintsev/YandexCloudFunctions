@@ -1,0 +1,47 @@
+import json
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+# Hard-coded database connection details
+host = "79.174.88.41"
+port = 17429  # Change this to your port if different
+user = "admin_1"
+password = "12345bB!"
+db_name = "db_places"
+
+def handler(event, context):
+    try:
+        place_id = event['queryStringParameters']['id']
+    except KeyError:
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': 'Missing id parameter'})
+        }
+
+    connection = psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname=db_name,
+        options="-c client_encoding=utf8"
+    )
+
+    try:
+        with connection.cursor(cursor_factory=RealDictCursor) as cursor:
+            sql = "SELECT * FROM places WHERE place_id = %s"
+            cursor.execute(sql, (place_id,))
+            result = cursor.fetchone()
+
+            if result is None:
+                return {
+                    'statusCode': 404,
+                    'body': json.dumps({'error': f'Place with id {place_id} not found'})
+                }
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps(result, ensure_ascii=False)
+            }
+    finally:
+        connection.close()

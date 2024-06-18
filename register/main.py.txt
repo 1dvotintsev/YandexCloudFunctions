@@ -1,0 +1,38 @@
+from main import app
+
+def handler(event, context):
+    from werkzeug.datastructures import Headers
+    from werkzeug.wrappers import Request, Response
+    from werkzeug.test import EnvironBuilder
+    import json
+
+    # Обработка структуры события
+    path = event.get('path', '/')
+    http_method = event.get('httpMethod', 'GET')
+    headers = event.get('headers', {})
+    body = event.get('body', '')
+    
+    # Обработка случая, когда тело запроса в формате base64
+    if event.get('isBase64Encoded', False):
+        import base64
+        body = base64.b64decode(body)
+
+    # Создание объекта окружения WSGI
+    builder = EnvironBuilder(
+        path=path,
+        headers=Headers(headers),
+        data=body,
+        method=http_method
+    )
+    env = builder.get_environ()
+    request = Request(env)
+
+    # Получение ответа от Flask приложения
+    response = Response.from_app(app, env)
+    
+    # Формирование ответа
+    return {
+        "statusCode": response.status_code,
+        "headers": dict(response.headers),
+        "body": response.get_data(as_text=True)
+    }

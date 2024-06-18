@@ -1,0 +1,70 @@
+import json
+import base64
+import psycopg2
+
+# Параметры подключения к базе данных
+host = "79.174.88.41"
+port = 17429
+user = "admin_1"
+password = "12345bB!"
+db_name = "db_users"
+
+def handler(event, context):
+    try:
+        # Декодируем тело запроса из Base64
+        body_decoded = base64.b64decode(event['body']).decode('utf-8')
+        body = json.loads(body_decoded)
+        email = body['email']
+    except (KeyError, json.JSONDecodeError):
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': 'Invalid input'})
+        }
+
+    connection = psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname=db_name,
+        options="-c client_encoding=utf8"
+    )
+
+    try:
+        with connection.cursor() as cursor:
+            sql = """
+                SELECT id, login, password, name, email, date_of_birth, reactions
+                FROM users_db
+                WHERE email = %s
+            """
+            cursor.execute(sql, (email,))
+            user_data = cursor.fetchone()
+
+            if user_data is None:
+                return {
+                    'statusCode': 404,
+                    'body': json.dumps({'error': 'User not found'})
+                }
+
+            user_info = {
+                'id': user_data[0],
+                'login': user_data[1],
+                'password': user_data[2],
+                'name': user_data[3],
+                'email': user_data[4],
+                'date_of_birth': user_data[5].isoformat() if user_data[5] else None,
+                'reactions': user_data[6]
+            }
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps(user_info, ensure_ascii=False)  # ensure_ascii=False для корректной кодировки
+            }
+    except Exception as e:
+        connection.rollback()
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+    finally:
+        connection.close()
